@@ -1,0 +1,5 @@
+# Dependencies are declared in pyproject.toml.
+# Install with:  uv sync           (creates .venv and installs everything)
+#            or  uv pip install -e .
+# This file is kept only for tools that still scrape requirements.txt.
+-e .
