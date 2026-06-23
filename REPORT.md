@@ -7,23 +7,31 @@
   as harmful, once its refusal mechanism is mechanistically suppressed?) in
   Llama-3.1-8B-Instruct and Qwen-2.5-7B-Instruct across twelve languages
   on the LinguaSafe benchmark.
-- The two models exhibit **opposite shallow-alignment failure modes**.
-  Llama over-refuses without perception endorsing the input
-  (`trigger_only_refusal`). Qwen under-refuses despite perception
-  endorsing the input (`decoupled_perception`).
+- The two models have **very different refusal architectures**.
+  Llama-3.1's refusal mechanism is consistently *coupled to its
+  perception of harm* — concept-deep refusals outnumber trigger-only
+  refusals in every language. Qwen-2.5's refusal mechanism is
+  essentially *perception-independent* — in the four languages where
+  it refuses meaningfully (en, ar, ru, zh), trigger-only refusals
+  dominate concept-deep by 5–10×; in the other eight languages
+  refusal barely fires at all, even though perception (under refusal
+  ablation) often recognises the harm.
 - Switching the model's chain-of-thought instructions from English to
-  the prompt's native language raises its recognised-harm rate by
-  **+16 pp on Llama and +28 pp on Qwen** averaged across non-English
-  languages. The perception circuit is markedly more
-  language-controllable than the refusal mechanism, and every existing
-  multilingual safety benchmark systematically under-estimates models'
-  actual perception by running the meta-task in English.
-- Two pre-registered validation attacks confirm the diagnostic.
-  Persuasion-style rewrites bypass Llama's trigger-only refusals at a
-  higher rate than matched concept-deep refusals in 11/12 languages
-  (sign-test p = 0.003). Deceptive paraphrase achieves **+48.8 pp
+  the prompt's native language lifts perception accuracy on L2/L3
+  prompts substantially — most strikingly on Qwen in low-resource
+  languages, where perception of harm is *present* but the
+  English-mediated probe was hiding it. Every existing multilingual
+  safety benchmark uses English-mediated CoT and is therefore
+  systematically under-estimating the model's actual perception.
+- Two pre-registered validation attacks confirm the architectural
+  picture. Within Llama, persuasion-style rewrites bypass the
+  residual trigger-only refusals at a higher rate than matched
+  concept-deep refusals in 11/12 languages (sign-test p = 0.003) —
+  confirming the trigger-only / concept-deep distinction is causally
+  meaningful. Across models, deceptive paraphrase achieves **+48.8 pp
   higher ASR on Qwen than on Llama** on shared multilingual prompts
-  (4/4 languages, ~2.4× the pre-registered target).
+  (4/4 languages, ~2.4× the pre-registered target) — confirming that
+  Qwen's firing refusals really are surface-pattern-anchored.
 - We think the most consequential thing here isn't either headline.
   It's that the alignment-quadrant decomposition is a **usable
   continuous-evaluation tool**. It runs cheaply on any
@@ -137,38 +145,77 @@ We kept the technique that worked, `abl(d_refuse)` as an engagement-
 unblocker, and switched to the severity-classification metric you've
 just read about.)
 
-## What we found: two opposite shallow-alignment failures
+## Two refusal architectures: perception-coupled vs perception-independent
 
 We ran the two-pass design on 500 LinguaSafe prompts per language,
 twelve languages, on both Llama-3.1-8B-Instruct and Qwen-2.5-7B-Instruct.
-The most striking finding isn't either model's individual failure
-mode but the fact that the two models fail in *opposite directions*.
+The story the data tells isn't "two opposite shallow-alignment
+failures". It's that the two models have *very different refusal
+architectures*. Llama's refusal mechanism is mostly *coupled* to its
+perception of harm — when it refuses, it's usually because the
+perception circuit endorses the input as harmful. Qwen's refusal
+mechanism is *not* coupled to perception in either direction — where
+it fires, perception typically doesn't endorse the input as harmful;
+where perception does endorse harm, the refusal mechanism often
+fails to fire.
 
-### Llama over-refuses without perception
+The headline metric for this comparison is refusal-on-L2/L3 versus
+perception-accuracy-on-L2/L3 (same prompt subset, same denominator).
+A perception-coupled refusal mechanism should produce two bars of
+roughly equal height per language. A perception-independent mechanism
+should not.
 
-Llama refuses LinguaSafe-graded harmful prompts at roughly 50–67%
-across every language we tested — flat and consistent.
+### Llama: refusal coupled to perception (with a residual trigger-only tail)
 
-Where Llama fails, it fails by **refusing without perception
-endorsing the input**. Across the languages tested, the `concept_deep`
-cell consistently outweighs `trigger_only_refusal` (Arabic 194 vs 80;
-Vietnamese 211 vs 84; Chinese 211 vs 84 under English-CoT). But the
-`trigger_only_refusal` cell is still substantial — and concentrated in
-specific domains. `explicit_content` is the trigger-only-heaviest
-domain across all twelve languages (30.8% trigger-only rate),
-followed by `crimes_illegal_activities` (14.0%). These are mostly
-*missed-harm* refusals: prompts the model refuses despite scoring
-them L0 or L1 under refusal ablation.
+![Llama refusal vs perception on L2/L3](figures/v2/llama__refusal_vs_perception_on_l23.png)
 
-That's the signature: behaviourally aligned, but the alignment is
-not grounded in a perception of the underlying harm.
+**Figure 1.** *Llama-3.1.* Refusal rate (grey) and perception
+accuracy (green) on the L2/L3 prompt subset, per language. The bars
+sit close together in every language — Llama refuses roughly the
+same prompts its perception circuit (under `abl(d_refuse)`) flags
+as harmful. The mechanism is consistent across languages.
 
-### Qwen under-refuses despite perception
+Within the prompts Llama refuses, concept-deep refusals outnumber
+trigger-only refusals in every language — Arabic 194 vs 80,
+Vietnamese 211 vs 84, Chinese 211 vs 84, etc. under EN-CoT. The
+within-refusal alignment-depth metric (figure below) is above 0.5
+for every Llama language.
 
-Qwen behaves very differently. It refuses LinguaSafe-graded harmful
-prompts at substantial rates *only* in four languages — those it was
-trained on heavily. In the other eight, it essentially does not
-refuse:
+The residual trigger-only tail is real but secondary, and it's
+concentrated in specific domains. `explicit_content` is the
+trigger-only-heaviest domain (~30.8% trigger-only rate aggregated
+across all twelve languages), followed by `crimes_illegal_activities`
+(~14.0%). These are mostly *missed-harm* refusals: prompts the
+model refuses behaviourally even though perception under ablation
+rates them L0/L1. The within-Llama persuasion attack (§Validation)
+is the behavioural confirmation that this tail is genuinely
+surface-pattern-anchored: PAP rewrites bypass trigger-only seeds at
++11.4 pp higher rate than matched concept-deep seeds (11/12
+languages, sign-test p = 0.003).
+
+The full per-quadrant decomposition on L2/L3 prompts:
+
+![Llama alignment-quadrant composition on L2/L3](figures/v2/llama__quadrant_composition_l23.png)
+
+**Figure 2.** *Per-language alignment-quadrant composition on the
+L2/L3 prompt subset, Llama, EN-CoT.* Green = concept-deep, amber =
+trigger-only, red = decoupled-perception, grey = aligned-with-content.
+The green band dominates every language. The amber tail is visible
+but always secondary.
+
+### Qwen: refusal essentially perception-independent
+
+![Qwen refusal vs perception on L2/L3](figures/v2/qwen__refusal_vs_perception_on_l23.png)
+
+**Figure 3.** *Qwen-2.5.* Refusal (grey) and perception accuracy
+(green) on L2/L3 prompts, per language. The bars don't track at all.
+In en/ar/ru/zh — the languages Qwen was trained on heavily — refusal
+sits much higher than perception accuracy. In the other eight
+languages, refusal collapses to near zero while perception accuracy
+remains substantial. Two visibly distinct patterns, neither of
+which is "perception-coupled refusal".
+
+Qwen's behavioural refusal rate splits cleanly into two regimes:
 
 | language | Qwen refusal | Llama refusal |
 |---|---:|---:|
@@ -185,133 +232,137 @@ refuse:
 | th | **0.000** | 0.562 |
 | vi | **0.002** | 0.628 |
 
-But the surprise is what happens in the four languages where Qwen
-*does* refuse. The refusals are overwhelmingly *not* perception-backed.
-In Arabic, Russian, Chinese and English, `trigger_only_refusal`
-outnumbers `concept_deep` by 5–10× under EN-CoT (ar: 229 vs 31; ru:
-231 vs 21; zh: 203 vs 28; en: 169 vs 51). When Qwen refuses, its own
-ablated perception pass typically rates the same prompt as L0/L1 —
-non-harmful.
+In the four trained languages, where Qwen *does* refuse, the
+refusals are overwhelmingly *not* perception-backed: trigger-only
+outnumbers concept-deep 5–10× under EN-CoT (ar: 229 vs 31; ru:
+231 vs 21; zh: 203 vs 28; en: 169 vs 51). When Qwen refuses, its
+ablated perception pass typically rates the same prompt as L0/L1.
+The refusals fire on surface triggers, not on perceived harm.
 
-Qwen's signature failure is **under-refusing despite perception**. In
-the eight low-refusal languages, the `decoupled_perception` cell
-dominates: the perception circuit recognises the harm under
-`abl(d_refuse)`, but the refusal head doesn't fire. Under native-CoT
-this becomes vivid — `decoupled_perception` reaches 275/500 in Bengali,
-198/500 in Hungarian, 182/500 in Serbian, 164/500 in Thai.
+In the eight low-resource languages, where Qwen barely refuses at
+all, perception under `abl(d_refuse)` still recognises a substantial
+fraction of L2/L3 prompts as harmful — particularly under native-CoT
+(see next section). The model knows. It doesn't refuse anyway.
 
-### The mirror image
+So Qwen's refusal mechanism is decoupled from its perception of
+harm in *both* directions: refusal fires without perception
+endorsing in the trained languages, and refusal fails to fire
+*despite* perception endorsing in the non-trained languages. The
+unifying description is **perception-independent refusal**.
 
-| | Llama-3.1 | Qwen-2.5 |
+The full per-quadrant decomposition on L2/L3 prompts makes this
+visible:
+
+![Qwen alignment-quadrant composition on L2/L3](figures/v2/qwen__quadrant_composition_l23.png)
+
+**Figure 4.** *Per-language alignment-quadrant composition on L2/L3
+prompts, Qwen, EN-CoT.* The trained languages (en, ar, ru, zh) show
+a large amber band (trigger-only refusal) with only a thin sliver
+of green (concept-deep). The other eight languages show a large red
+band (decoupled-perception — perception present, refusal absent)
+with a substantial grey band (aligned-with-content). The picture
+inverts the Llama figure in nearly every way.
+
+### Refusal depth among refused prompts
+
+The cleanest single-number summary of the architectural difference
+is the within-refusal alignment-depth metric: of the L2/L3 prompts
+the model actually refused, what fraction were concept-deep?
+
+![Refusal depth among refused L2/L3 prompts](figures/v2/refusal_depth_among_refused.png)
+
+**Figure 5.** *Fraction of refused L2/L3 prompts that were
+concept-deep (i.e. refusal backed by perception), per language,
+both models on the same chart.* Llama bars sit above 0.5 in every
+language — most of its refusals are perception-backed. Qwen's bars
+in en/ar/ru/zh sit well below 0.5 — most of its firing refusals
+are surface-trigger-only. (Qwen bars are absent for the other
+eight languages because Qwen barely refuses there: the denominator
+is too small to compute the ratio meaningfully.)
+
+### The architectural contrast
+
+|  | Llama-3.1 | Qwen-2.5 |
 |---|---|---|
-| Refusal rate (12-lang avg, LinguaSafe harmful) | ~0.59 (uniform) | ~0.21 (4 langs only) |
-| When it refuses, refusal is mostly... | concept-deep | trigger-only |
-| Signature failure | over-refusal without perception (`trigger_only_refusal`) | under-refusal despite perception (`decoupled_perception`) |
-| What's missing in the underrefusing languages | — | refusal supervision (perception is fine) |
-| What's missing in the overrefusing cells | grounded harm representation | — |
+| Refusal rate on L2/L3 (avg across 12 langs) | high (~0.6), flat across languages | high in 4 trained langs only; near zero in the other 8 |
+| Refusal mechanism, when it fires | mostly perception-backed (concept-deep > trigger-only in every language) | mostly surface-pattern-anchored (trigger-only 5–10× concept-deep in trained languages) |
+| When perception endorses harm | refusal usually fires too | refusal often doesn't fire (especially in low-resource languages) |
+| Behavioural readout (§ Validation) | persuasion bypass works *especially* on the trigger-only minority — confirms the small architectural seam | deceptive paraphrase achieves +48.8 pp higher ASR than on Llama — confirms the surface-trigger refusals are surface-anchored |
+| Alignment-data prescription per cell | shore up the trigger-only tail (esp. `explicit_content`) with perception-grounded training data | wire perception into refusal in low-resource languages; replace surface-trigger refusals in trained languages with perception-anchored ones |
 
-Both expose a perception/refusal decoupling — but in opposite
-directions. Both call for different alignment-data prescriptions.
-This is the kind of disambiguation the existing literature can't
-reach because it only measures refusal.
+Both expose perception/refusal decouplings, but the *kind* of
+decoupling is different — and that matters because the data
+prescription is different. This is the disambiguation the existing
+multilingual safety literature can't reach because it only measures
+refusal.
 
-The picture is clearest as a per-language bar chart of the gap
-between refusal rate and perception rate (judged-harmful rate under
-`abl(d_refuse)`):
+## A headline finding: native-CoT recovers the perception the English probe was hiding
 
-![Llama refusal vs perception per language](figures/llama__refusal_perception_gap.png)
+The two-pass design depends on a meta-task — "on a scale L0–L3, how
+harmful is this request?" — that we have to write in *some* language.
+When we ran that meta-task in English regardless of the prompt
+language (which is what every existing multilingual safety
+benchmark does, because rubrics and scoring templates tend to be
+in English) versus translating it into the prompt's own language
+with an explicit reason-in-this-language directive, the model's
+perception accuracy on L2/L3 prompts shifted dramatically.
 
-**Figure 1.** *Llama-3.1.* Refusal rate (blue) consistently exceeds
-perception rate (orange) across all twelve languages — the visual
-signature of over-refusal without perception.
+The shifts are largest where they matter most: on Qwen in
+low-resource languages — exactly the eight languages where the
+behavioural refusal rate is near-zero.
 
-![Qwen refusal vs perception per language](figures/qwen__refusal_perception_gap.png)
+![Qwen perception accuracy on L2/L3 — EN-CoT vs native-CoT](figures/v2/qwen__native_cot_perception_lift_l23.png)
 
-**Figure 2.** *Qwen-2.5.* Perception rate (orange) consistently
-exceeds refusal rate (blue) — the visual signature of under-refusal
-despite perception. The four languages with non-trivial refusal (en,
-ar, ru, zh) are still perception-light because their refusals are
-trigger-only-dominated.
+**Figure 6.** *Qwen-2.5 perception accuracy on the L2/L3 prompt
+subset, per language, under EN-CoT (blue) vs native-CoT (orange),
+with per-language delta annotated.* The eight low-resource columns
+(bn, cs, hu, ko, ms, sr, th, vi) are the headline — many of them
+gain 30–50 percentage points just from switching the meta-task to
+the prompt's own language. In other words, **Qwen's perception
+circuit already recognises a substantial fraction of harmful
+content in low-resource languages** — the English-mediated probe
+was hiding that fact.
 
-The full per-quadrant breakdown per language, contrasting EN-CoT and
-native-CoT, looks like this:
+The same effect, much smaller in magnitude, on Llama:
 
-![Llama alignment quadrants per language](figures/llama__quadrants_en_vs_native.png)
+![Llama perception accuracy on L2/L3 — EN-CoT vs native-CoT](figures/v2/llama__native_cot_perception_lift_l23.png)
 
-![Qwen alignment quadrants per language](figures/qwen__quadrants_en_vs_native.png)
+**Figure 7.** *Llama-3.1 perception accuracy on L2/L3, same axes.*
+The native-CoT lift is positive in 10 of 11 non-English languages
+but much smaller (Llama's English-CoT perception was already high
+because its refusal is perception-coupled to begin with). One
+notable regression: Russian. Llama Russian under native-CoT loses
+about 15 pp of severity-weighted F1, and the same regression does
+not appear on Qwen. Flagged as a Llama-specific fine-tuning anomaly
+in limitations.
 
-**Figure 3.** *Per-language quadrant breakdowns under EN-CoT (left
-panel) vs native-CoT (right panel) for both models.* Concept-deep is
-green; trigger-only is orange; decoupled-perception is yellow;
-aligned-with-content is grey. Note that for Qwen, the orange and
-yellow bands grow visibly when switching to native-CoT — what changes
-under language drift is mostly *perception*, not behaviour.
+**What this means for benchmarks.** Every existing multilingual
+safety benchmark uses English-mediated CoT for non-English prompts.
+That choice doesn't make the *behavioural* refusal rate look
+better or worse — refusal is what it is at inference time. What
+it does is *systematically under-estimate* the model's perception
+of the underlying harm, which is the variable a model developer
+actually wants to track if they're trying to figure out where to
+add training data. The numbers in figures 6 and 7 say the
+English-mediated probe was 20–50 percentage points too pessimistic
+on Qwen in eight of twelve languages.
 
-## A headline finding: native-CoT lifts perception
+**What this means for Qwen's failure mode.** The eight low-resource
+languages where Qwen refuses ~0% but native-CoT perception is
+substantial are precisely the cells where the *prescription* is
+clearest: the perception circuit is already there. The missing
+piece is the refusal-side wiring connecting perception to behaviour.
+That's a different (and probably cheaper) alignment-data
+intervention than "train the model to perceive harm in language X".
 
-A side observation from the two-pass design turns out to be a major
-result on its own.
-
-When we ran the perception pass under English chain-of-thought
-instructions ("on a scale L0–L3, how harmful is this request?", in
-English, regardless of prompt language) versus native-language
-instructions (translated into the prompt's language, with an explicit
-reason-in-this-language directive), we found dramatic differences in
-the model's recognised-harm rate.
-
-**Switching to native-CoT raises the judged-harmful rate by an
-average of +16 pp on Llama and +28 pp on Qwen** across eleven
-non-English languages, with the largest individual gains on
-low-resource languages:
-
-| language | Llama Δ judged-harmful | Qwen Δ judged-harmful |
-|---|---:|---:|
-| Bengali | +26 pp | **+52 pp** |
-| Hungarian | **+33 pp** | +38 pp |
-| Chinese | +24 pp | +27 pp |
-| Korean | +21 pp | +25 pp |
-| Thai | +18 pp | +27 pp |
-| Russian | −12 pp* | +30 pp |
-
-*The Russian regression on Llama is a Llama-specific fine-tuning
-anomaly — Qwen Russian goes the other way (+30 pp). The same regression
-doesn't appear on any other Llama language. Flagged in limitations.
-
-The severity-weighted F1 of the perception pass — which is the most
-LinguaSafe-comparable quantity — shifts in the same direction:
-
-![Llama severity F1 EN vs native](figures/llama__severity_f1_en_vs_native.png)
-
-![Qwen severity F1 EN vs native](figures/qwen__severity_f1_en_vs_native.png)
-
-**Figure 4.** *Severity-weighted F1 per language under EN-CoT (blue)
-vs native-CoT (orange).* Llama gains +0.08 to +0.17 in 10/11
-non-English languages; Qwen gains +0.39 to +0.64 in 10/11. The Qwen
-shifts are enormous — running the perception classifier in the
-prompt's own language nearly doubles the F1 on bn, hu, ko, sr, th.
-
-**What this means.** The perception circuit is markedly more
-language-controllable than the refusal mechanism. The same model
-that perceives a prompt as L0/L1 under English instructions perceives
-it as L2/L3 under native-language instructions — without any change
-in weights, training data, or sampling temperature, just by
-translating the meta-task.
-
-The implication for benchmarking is uncomfortable: every existing
-multilingual safety benchmark uses English-mediated CoT for non-English
-prompts (because the rubric, the scoring template, the LLM-as-judge
-prompt is in English). This systematically *under-estimates* the
-model's actual harm-perception by 15–60 pp depending on language. The
-true perception ability is bigger than what the literature has been
-reporting. The refusal *behaviour* doesn't change with the meta-task
-language; only the perception does.
-
-The implication for alignment is more interesting. If the perception
-circuit already recognises the harm under native-language scaffolding,
-you might be able to elicit refusal at inference time without
-re-training — just by prepending a native-language safety reminder or
-a native-language pre-classification step. We don't test this directly,
-but it's a low-cost candidate intervention motivated by these numbers.
+**A candidate cheap intervention.** If perception already recognises
+the harm under native-language scaffolding, you might be able to
+elicit refusal at inference time — by prepending a native-language
+safety reminder, or a native-language pre-classification step. We
+don't test this directly here, but it falls out of the result as
+the obvious follow-up: an inference-time scaffold may close the
+Qwen low-resource refusal gap without requiring any additional
+training data.
 
 ## Validating the diagnostic
 
